@@ -234,44 +234,73 @@ class Aluno {
      * @returns Objeto com informações do aluno
      */
     // Recebe o ID do aluno como parâmetro e retorna um AlunoDTO ou null
-    static async listarAluno(id_aluno: number): Promise<AlunoDTO | null> {
-        try {
-            // Bloco try: aqui tentamos executar o código que pode gerar um erro.
-            // Se ocorrer algum erro dentro deste bloco, ele será capturado pelo catch.
+static async listarAluno(id_aluno: number): Promise<AlunoDTO | null> {
+  try {
+    // ✅ MELHORIA 1: Query com colunas explícitas ao invés de SELECT *
+    // Evitar SELECT * reduz tráfego de rede, melhora legibilidade e protege
+    // contra quebras caso novas colunas sejam adicionadas no futuro.
+    // O "$1" é um parâmetro dinâmico (prepared statement) que protege
+    // contra ataques de SQL Injection — nunca concatene valores direto na query!
+    const querySelectAluno = `
+      SELECT
+        id_aluno,
+        ra,
+        nome,
+        sobrenome,
+        data_nascimento,
+        endereco,
+        email,
+        celular,
+        status_aluno
+      FROM aluno
+      WHERE id_aluno = $1
+    `;
 
-            // Define a query SQL — o "$1" é um parâmetro que será substituído pelo valor real (id_aluno)
-            // Isso é chamado de "prepared statement" e protege contra ataques de SQL Injection
-            const querySelectAluno = `SELECT * FROM aluno WHERE id_aluno = $1`;
+    // Executa a query passando o id_aluno como parâmetro (substitui o $1).
+    // "await" pausa a execução até o banco responder (operação assíncrona).
+    const respostaBD = await database.query(querySelectAluno, [id_aluno]);
 
-            // Executa a query passando o id_aluno como segundo argumento (substitui o $1)
-            const respostaBD = await database.query(querySelectAluno, [id_aluno]);
-
-            // Monta o objeto AlunoDTO com o primeiro resultado retornado (rows[0] = primeira linha)
-            const alunoDTO: AlunoDTO = {
-                id_aluno: respostaBD.rows[0].id_aluno,               // ID do aluno
-                nome: respostaBD.rows[0].nome,                       // Nome do aluno
-                sobrenome: respostaBD.rows[0].sobrenome,             // Sobrenome do aluno
-                data_nascimento: respostaBD.rows[0].data_nascimento, // Data de nascimento do aluno
-                endereco: respostaBD.rows[0].endereco,               // Endereço do aluno
-                email: respostaBD.rows[0].email,                     // E-mail do aluno
-                celular: respostaBD.rows[0].celular,                 // Celular do aluno
-                ra: respostaBD.rows[0].ra,                           // Registro Acadêmico
-                status_aluno: respostaBD.rows[0].status_aluno        // Status ativo/inativo
-            };
-
-            // Retorna o objeto aluno preenchido com os dados do banco
-            return alunoDTO;
-        } catch (error) {
-            // Bloco catch: se algum erro ocorrer no bloco try, ele será capturado aqui.
-            // Isso evita que o erro interrompa a execução do programa.
-
-            // Exibe uma mensagem de erro no console para facilitar o debug
-            console.log(`Erro ao realizar a consulta: ${error}`);
-
-            // Retorna null para indicar que não foi possível buscar o aluno
-            return null;
-        }
+    // ✅ MELHORIA 2: Verificação antes de acessar rows[0]
+    // Sem essa checagem, se o aluno não existir, rows[0] seria undefined
+    // e o código quebraria ao tentar acessar rows[0].nome, por exemplo.
+    // Retornar null aqui comunica claramente: "aluno não encontrado".
+    if (!respostaBD.rows.length) {
+      return null;
     }
+
+    // ✅ MELHORIA 3: Desestruturação para evitar repetição de respostaBD.rows[0]
+    // Em vez de repetir respostaBD.rows[0] em cada linha, extraímos o objeto
+    // uma única vez. Isso deixa o código mais limpo e fácil de manter.
+    const aluno = respostaBD.rows[0];
+
+    // Monta o objeto AlunoDTO com os dados retornados pelo banco.
+    // AlunoDTO é um objeto simples de transferência de dados (sem métodos),
+    // usado para trafegar informações entre as camadas da aplicação.
+    const alunoDTO: AlunoDTO = {
+      id_aluno:        aluno.id_aluno,
+      ra:              aluno.ra,
+      nome:            aluno.nome,
+      sobrenome:       aluno.sobrenome,
+      data_nascimento: aluno.data_nascimento,
+      endereco:        aluno.endereco,
+      email:           aluno.email,
+      celular:         aluno.celular,
+      status_aluno:    aluno.status_aluno,
+    };
+
+    return alunoDTO;
+
+  } catch (error) {
+    // ✅ MELHORIA 4: console.error() no lugar de console.log()
+    // console.error() é semanticamente correto para erros: exibe em vermelho
+    // no terminal e é filtrado separadamente em ferramentas de monitoramento.
+    // O cast para Error garante acesso à mensagem tipada no TypeScript.
+    console.error(`Erro ao buscar aluno: ${(error as Error).message}`);
+
+    // Retorna null para indicar ao chamador que houve uma falha.
+    return null;
+  }
+}
 
     /**
     * Cadastra um novo aluno no banco de dados
