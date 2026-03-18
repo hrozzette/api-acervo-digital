@@ -349,44 +349,59 @@ static async listarAluno(id_aluno: number): Promise<AlunoDTO | null> {
    */
     // Recebe o ID do aluno e realiza uma "remoção lógica" (não apaga do banco, apenas desativa)
     static async removerAluno(id_aluno: number): Promise<boolean> {
-        try {
-            // Busca o aluno no banco antes de tentar remover, para verificar se ele existe e está ativo
-            const aluno: AlunoDTO | null = await this.listarAluno(id_aluno);
+  try {
+    // Busca o aluno no banco antes de tentar remover para verificar se ele
+    // existe e está ativo. Se listarAluno() retornar null, o aluno não existe.
+    const aluno: AlunoDTO | null = await this.listarAluno(id_aluno);
 
-            // Só prossegue se o aluno existir (não for null) E estiver com status ativo (true)
-            if (aluno && aluno.status_aluno) {
-                // Query que desativa todos os empréstimos relacionados ao aluno
-                // Em vez de apagar, usa UPDATE para setar o status como FALSE (remoção lógica)
-                const queryDeleteEmprestimoAluno = `UPDATE emprestimo 
-                                                    SET status_emprestimo_registro = FALSE
-                                                    WHERE id_aluno=$1;`;
-
-                // Executa a desativação dos empréstimos do aluno
-                await database.query(queryDeleteEmprestimoAluno, [id_aluno]);
-
-                // Query que desativa o próprio aluno (também uma remoção lógica)
-                const queryDeleteAluno = `UPDATE aluno 
-                                        SET status_aluno = FALSE
-                                        WHERE id_aluno=$1;`;
-
-                // Executa a desativação do aluno e armazena o resultado
-                const result = await database.query(queryDeleteAluno, [id_aluno]);
-
-                // "rowCount" indica quantas linhas foram afetadas pelo UPDATE
-                // Se for diferente de 0, significa que o aluno foi desativado com sucesso
-                return true;
-            }
-
-            // Se o aluno não existir ou já estiver inativo, retorna false
-            return false;
-
-        } catch (error) {
-            // Exibe o erro no console e retorna false em caso de falha
-            console.log(`Erro na consulta: ${error}`);
-            return false;
-        }
+    // ✅ MELHORIA 1: Retorno antecipado (early return) no lugar do if aninhado
+    // Se o aluno não existir (null) ou já estiver inativo (status false),
+    // encerramos imediatamente. Isso reduz o nível de indentação e deixa
+    // o fluxo principal do código mais fácil de acompanhar.
+    if (!aluno || !aluno.status_aluno) {
+      return false;
     }
 
+    // ✅ MELHORIA 2: Execução paralela com Promise.all()
+    // As duas queries de UPDATE são independentes entre si — o resultado
+    // de uma não afeta a outra. Executá-las em paralelo com Promise.all()
+    // reduz o tempo de espera: em vez de esperar Query1 terminar para
+    // iniciar Query2, ambas rodam ao mesmo tempo.
+    //
+    // Remoção lógica: usamos UPDATE com status = FALSE ao invés de DELETE,
+    // preservando o histórico de dados no banco (boa prática em sistemas reais).
+    const queryDesativarEmprestimos = `
+      UPDATE emprestimo
+      SET status_emprestimo_registro = FALSE
+      WHERE id_aluno = $1
+    `;
+
+    const queryDesativarAluno = `
+      UPDATE aluno
+      SET status_aluno = FALSE
+      WHERE id_aluno = $1
+    `;
+
+    // Executa ambas as queries simultaneamente e aguarda as duas finalizarem.
+    // Se qualquer uma falhar, o catch será acionado.
+    const [resultadoAluno] = await Promise.all([
+      database.query(queryDesativarAluno, [id_aluno]),
+      database.query(queryDesativarEmprestimos, [id_aluno]),
+    ]);
+
+    // ✅ MELHORIA 3: Validação do rowCount para confirmar o UPDATE
+    // "rowCount" indica quantas linhas foram afetadas pela query.
+    // Verificar se é maior que 0 garante que o aluno foi de fato desativado,
+    // em vez de retornar true cegamente independente do resultado.
+    return (resultadoAluno.rowCount ?? 0) > 0;
+
+  } catch (error) {
+    // ✅ MELHORIA 4: console.error() no lugar de console.log()
+    // Semanticamente correto para erros e destacado em vermelho no terminal.
+    console.error(`Erro ao remover aluno: ${(error as Error).message}`);
+    return false;
+  }
+}
     /**
     * Atualiza os dados de um aluno no banco de dados.
     * @param aluno Objeto do tipo Aluno com os novos dados
